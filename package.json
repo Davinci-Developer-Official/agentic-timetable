@@ -1,0 +1,23 @@
+{
+  "name": "agentic-timetable",
+  "version": "2.0.0",
+  "description": "Agentic university timetable parser, conflict detector, room finder, and natural-language schedule assistant",
+  "license": "ISC",
+  "author": "Thomas, Victor & Winrose",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
