@@ -161,3 +161,41 @@ test("HTTP API endpoints and live Excel upload work end-to-end", async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test("Vercel serverless entrypoint (api/index.js) and tmp-based uploads work", async () => {
+  const vercelApp = require("../api/index");
+  assert.equal(typeof vercelApp, "function");
+
+  const tmpPersist = path.join(os.tmpdir(), `agentic-tt-vercel-${Date.now()}.json`);
+  const tmpUploads = fs.mkdtempSync(path.join(os.tmpdir(), "agentic-tt-vup-"));
+  const { app } = createApp({
+    isVercel: true,
+    uploadDir: tmpUploads,
+    persistFile: tmpPersist
+  });
+
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, () => resolve(s));
+  });
+
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const health = await fetch(`${baseUrl}/api/health`).then((r) => r.json());
+    assert.equal(health.runtime, "vercel");
+    assert.ok(health.coursesLoaded > 100);
+
+    const form = new FormData();
+    form.append("file", new Blob([fs.readFileSync(SAMPLE_EXCEL)]), "vercel-upload.xlsx");
+    const uploadRes = await fetch(`${baseUrl}/api/upload`, {
+      method: "POST",
+      body: form
+    }).then((r) => r.json());
+    assert.equal(uploadRes.success, true);
+    assert.equal(uploadRes.ephemeral, true);
+    assert.ok(fs.existsSync(tmpPersist));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(tmpUploads, { recursive: true, force: true });
+    if (fs.existsSync(tmpPersist)) fs.rmSync(tmpPersist, { force: true });
+  }
+});

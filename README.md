@@ -28,3 +28,13 @@ Copy `.env.example` to `.env` and set either `GEMINI_API_KEY` or `OPENAI_API_KEY
 ```bash
 npm test
 ```
+
+## Deploying to Vercel
+
+This project includes [vercel.json](vercel.json) and [api/index.js](api/index.js) configured for Vercel:
+
+- Static assets in `public/` are served from Vercel's CDN (`"outputDirectory": "public"`).
+- `/api/*`, `/course/*`, and `/file` rewrite to `api/index.js`, which exports the Express app with `structured.json` bundled via `includeFiles`.
+- When `VERCEL` is set, Excel uploads use `/tmp` so they work without `EROFS` read-only errors (note: `/tmp` is per-instance and temporary; commit `structured.json` or attach a database for permanent updates).
+- In Vercel Project Settings, optionally set `GEMINI_API_KEY` or `OPENAI_API_KEY` under Environment Variables.
+

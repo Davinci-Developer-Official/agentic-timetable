@@ -532,10 +532,11 @@
 
       try {
         const res = await apiJson("/api/upload", { method: "POST", body: formData });
-        feedback.innerHTML = `<span style="color:var(--emerald)">Loaded ${res.courseCount} courses from ${escapeHtml(res.filename)}!</span>`;
+        const note = res.ephemeral ? " (active for current Vercel session)" : "";
+        feedback.innerHTML = `<span style="color:var(--emerald)">Loaded ${res.courseCount} courses from ${escapeHtml(res.filename)}${note}!</span>`;
         await refreshDatasetMeta();
         await runExplorerSearch();
-        setTimeout(closeModal, 700);
+        setTimeout(closeModal, res.ephemeral ? 1300 : 700);
       } catch (err) {
         feedback.innerHTML = `<span style="color:var(--danger)">Upload failed: ${escapeHtml(err.message)}</span>`;
       }

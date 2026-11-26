@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
@@ -26,12 +27,18 @@ loadEnv();
 
 function createApp(options = {}) {
   const app = express();
-  const uploadDir = options.uploadDir || path.join(__dirname, "src");
+  const isVercel = Boolean(options.isVercel ?? process.env.VERCEL);
+  const uploadDir =
+    options.uploadDir ||
+    (isVercel ? path.join(os.tmpdir(), "agentic-timetable-uploads") : path.join(__dirname, "src"));
   const dataFile = options.dataFile || path.join(__dirname, "structured.json");
+  const persistFile =
+    options.persistFile ||
+    (isVercel ? path.join(os.tmpdir(), "agentic-timetable-structured.json") : dataFile);
 
   fs.mkdirSync(uploadDir, { recursive: true });
 
-  const store = new TimetableStore(dataFile);
+  const store = new TimetableStore(dataFile, { persistFilePath: persistFile });
   const agent = new TimetableAgent(store);
 
   app.use(cors());
@@ -65,12 +72,17 @@ function createApp(options = {}) {
         success: true,
         filename: req.file.originalname,
         courseCount: courses.length,
+        ephemeral: isVercel,
         stats: store.getStats(),
         structured: courses
       });
     } catch (error) {
       console.error("Excel upload error:", error);
       return res.status(500).json({ error: "Failed to parse Excel timetable file" });
+    } finally {
+      if (isVercel && req.file?.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
     }
   }
 
@@ -79,6 +91,7 @@ function createApp(options = {}) {
     res.json({
       status: "ok",
       service: "agentic-timetable",
+      runtime: isVercel ? "vercel" : "node",
       coursesLoaded: store.courses.length,
       llmConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY)
     });
