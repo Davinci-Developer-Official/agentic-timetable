@@ -4,10 +4,15 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 
-const { parseCellValue, parseRows, parseWorkbook } = require("../lib/parser");
+const {
+  parseCellValue,
+  parseRows,
+  parseWorkbook,
+  parseWorkbookBuffer
+} = require("../lib/parser");
 const { TimetableStore } = require("../lib/store");
 const { TimetableAgent } = require("../lib/agent");
-const { createApp } = require("../index");
+const { getRuntime } = require("../lib/runtime");
 
 const ROOT_DIR = path.join(__dirname, "..");
 const SAMPLE_EXCEL = path.join(
@@ -51,11 +56,13 @@ test("parseRows omits trailing empty columns", () => {
   assert.equal(parsed[0].timetable[0].slots.length, 2);
 });
 
-test("parseWorkbook parses the real Excel timetable", () => {
+test("parseWorkbook and parseWorkbookBuffer parse the real Excel timetable", () => {
   assert.ok(fs.existsSync(SAMPLE_EXCEL), "Sample Excel file must exist");
-  const courses = parseWorkbook(SAMPLE_EXCEL);
-  assert.ok(courses.length > 50, `Expected >50 courses, got ${courses.length}`);
-  const bbam = courses.find((c) => c.course === "BBAM Y1S1");
+  const fromPath = parseWorkbook(SAMPLE_EXCEL);
+  const fromBuffer = parseWorkbookBuffer(fs.readFileSync(SAMPLE_EXCEL));
+  assert.ok(fromPath.length > 50, `Expected >50 courses, got ${fromPath.length}`);
+  assert.equal(fromBuffer.length, fromPath.length);
+  const bbam = fromBuffer.find((c) => c.course === "BBAM Y1S1");
   assert.ok(bbam, "Expected BBAM Y1S1 in parsed workbook");
   assert.ok(bbam.timetable.length >= 5);
 });
@@ -111,91 +118,25 @@ test("TimetableAgent handles natural-language queries with tool traces", async (
   assert.ok(lecRes.slots.length > 0);
 });
 
-test("HTTP API endpoints and live Excel upload work end-to-end", async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentic-tt-"));
-  const tmpJson = path.join(tmpDir, "structured.json");
-  fs.copyFileSync(path.join(ROOT_DIR, "structured.json"), tmpJson);
-
-  const { app } = createApp({ dataFile: tmpJson, uploadDir: tmpDir });
-  const server = await new Promise((resolve) => {
-    const s = app.listen(0, () => resolve(s));
-  });
-
+test("getRuntime supports Vercel tmp persistence from in-memory workbook buffer", () => {
+  const tmpPersist = path.join(os.tmpdir(), `agentic-tt-next-${Date.now()}.json`);
   try {
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const rt = getRuntime({
+      fresh: true,
+      isVercel: true,
+      dataFile: path.join(ROOT_DIR, "structured.json"),
+      persistFile: tmpPersist
+    });
+    assert.equal(rt.isVercel, true);
+    assert.ok(rt.store.courses.length > 100);
 
-    const health = await fetch(`${baseUrl}/api/health`).then((r) => r.json());
-    assert.equal(health.status, "ok");
-    assert.ok(health.coursesLoaded > 100);
-
-    const search = await fetch(`${baseUrl}/api/search?course=BBAM%20Y1S1&day=Tuesday`).then((r) => r.json());
-    assert.ok(search.count >= 1);
-
-    const legacy = await fetch(`${baseUrl}/course/BBAM%20Y1S1`).then((r) => r.json());
-    assert.ok(Array.isArray(legacy) && legacy.length > 0);
-
-    const agentReply = await fetch(`${baseUrl}/api/agent/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "Give me a timetable overview" })
-    }).then((r) => r.json());
-    assert.equal(agentReply.steps[0].tool, "get_timetable_stats");
-
-    // Verify Excel upload updates live store
-    const form = new FormData();
-    const excelBuffer = fs.readFileSync(SAMPLE_EXCEL);
-    form.append("file", new Blob([excelBuffer]), "timetable.xlsx");
-
-    const uploadRes = await fetch(`${baseUrl}/api/upload`, {
-      method: "POST",
-      body: form
-    }).then((r) => r.json());
-    assert.equal(uploadRes.success, true);
-    assert.ok(uploadRes.courseCount > 50);
-
-    // Ensure normalized structured.json is significantly smaller and clean
-    const saved = JSON.parse(fs.readFileSync(tmpJson, "utf8"));
-    assert.equal(saved.length, uploadRes.courseCount);
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-});
-
-test("Vercel serverless entrypoint (api/index.js) and tmp-based uploads work", async () => {
-  const vercelApp = require("../api/index");
-  assert.equal(typeof vercelApp, "function");
-
-  const tmpPersist = path.join(os.tmpdir(), `agentic-tt-vercel-${Date.now()}.json`);
-  const tmpUploads = fs.mkdtempSync(path.join(os.tmpdir(), "agentic-tt-vup-"));
-  const { app } = createApp({
-    isVercel: true,
-    uploadDir: tmpUploads,
-    persistFile: tmpPersist
-  });
-
-  const server = await new Promise((resolve) => {
-    const s = app.listen(0, () => resolve(s));
-  });
-
-  try {
-    const baseUrl = `http://127.0.0.1:${server.address().port}`;
-    const health = await fetch(`${baseUrl}/api/health`).then((r) => r.json());
-    assert.equal(health.runtime, "vercel");
-    assert.ok(health.coursesLoaded > 100);
-
-    const form = new FormData();
-    form.append("file", new Blob([fs.readFileSync(SAMPLE_EXCEL)]), "vercel-upload.xlsx");
-    const uploadRes = await fetch(`${baseUrl}/api/upload`, {
-      method: "POST",
-      body: form
-    }).then((r) => r.json());
-    assert.equal(uploadRes.success, true);
-    assert.equal(uploadRes.ephemeral, true);
+    const courses = rt.store.replaceFromWorkbookBuffer(
+      fs.readFileSync(SAMPLE_EXCEL),
+      "uploaded.xlsx"
+    );
+    assert.ok(courses.length > 50);
     assert.ok(fs.existsSync(tmpPersist));
   } finally {
-    await new Promise((resolve) => server.close(resolve));
-    fs.rmSync(tmpUploads, { recursive: true, force: true });
     if (fs.existsSync(tmpPersist)) fs.rmSync(tmpPersist, { force: true });
   }
 });
